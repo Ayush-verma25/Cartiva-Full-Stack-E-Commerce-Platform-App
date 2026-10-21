@@ -28,7 +28,14 @@ mock.module("../dist/middleware/auth.js", {
     },
   },
 });
-mock.module("../dist/routes/categoryRoutes.js", { defaultExport: express.Router() });
+const { ImageInputError } = await import("../dist/utils/imageValidation.js");
+const categoryRouter = express.Router();
+categoryRouter.get("/:error", (req, res, next) => {
+  next(req.params.error === "image-input"
+    ? new ImageInputError("Invalid category image")
+    : new Error("Unexpected category failure"));
+});
+mock.module("../dist/routes/categoryRoutes.js", { defaultExport: categoryRouter });
 
 let server;
 const originalListen = express.application.listen;
@@ -183,6 +190,31 @@ test("valid file bytes determine upload handling regardless of client metadata",
   assert.equal(res.body.success, true);
   assert.ok(res.body.url.includes("/f_auto,q_auto/"));
   assert.deepEqual(streamUpload.mock.calls[0].arguments[0], { folder: "Cartiva", resource_type: "image" });
+});
+
+test("non-image MIME types return 400 JSON for single and multiple uploads", async () => {
+  for (const [path, field] of [["/single", "image"], ["/multiple", "images"]]) {
+    const res = await post(path, filesForm([[Buffer.from("not an image"), "text/plain", "file.txt"]], field));
+    assert.equal(res.status, 400);
+    assert.deepEqual(res.body, {
+      success: false,
+      message: "Invalid file type. Only image files are allowed.",
+    });
+  }
+  assertNoProviderCalls();
+});
+
+test("route error handling converts category ImageInputError and delegates other errors", async () => {
+  const categoryUrl = baseUrl.replace("/api/upload", "/api/categories");
+  const invalidImage = await nativeFetch(`${categoryUrl}/image-input`);
+  assert.equal(invalidImage.status, 400);
+  assert.deepEqual(await invalidImage.json(), { success: false, message: "Invalid category image" });
+
+  const unexpected = await nativeFetch(`${categoryUrl}/unexpected`);
+  assert.equal(unexpected.status, 500);
+  assert.match(unexpected.headers.get("content-type"), /text\/html/);
+  await unexpected.text();
+  assertNoProviderCalls();
 });
 
 test("unsupported content, SVG, empty and truncated buffers never reach Cloudinary", async () => {
