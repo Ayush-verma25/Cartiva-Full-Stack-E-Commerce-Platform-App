@@ -17,6 +17,7 @@ export interface AuthenticatedRequest extends Request {
 
 const NEON_AUTH_JWKS_URL = process.env.NEON_AUTH_JWKS_URL;
 const NEON_AUTH_BASE_URL = process.env.NEON_AUTH_BASE_URL;
+const NEON_AUTH_AUDIENCE = process.env.NEON_AUTH_AUDIENCE;
 
 let neonJWKS: ReturnType<typeof createRemoteJWKSet> | null = null;
 let neonIssuer = "";
@@ -32,35 +33,44 @@ try {
   console.warn("Neon Auth JWKS initialization warning:", e);
 }
 
-// verifies authentication token using Neon Auth JWKS (jose jwtVerify)
+/**
+ * Verifies an EdDSA JWT against the configured Neon issuer, audience, and JWKS,
+ * requiring expiration and subject claims. Looks up the user and store by subject;
+ * missing user details fall back to token claims or the email local part for name.
+ * Admin status from either the user record or token takes precedence, followed by
+ * merchant status from either source or store ownership; otherwise uses customer.
+ *
+ * @param token - JWT without the Bearer prefix.
+ * @returns The resolved user with a store ID, or null for that ID when absent or
+ * the user is an admin. Returns null for missing configuration, invalid tokens
+ * (including non-UUID subjects), or verification and database lookup errors.
+ */
 export const verifyAuthToken = async (
   token: string,
 ): Promise<AuthUser | null> => {
-  if (!token || !neonJWKS || !neonIssuer) return null;
+  if (!token || !neonJWKS || !neonIssuer || !NEON_AUTH_AUDIENCE) return null;
 
   try {
     const { payload } = await jwtVerify(token, neonJWKS, {
       issuer: neonIssuer,
+      audience: NEON_AUTH_AUDIENCE,
+      algorithms: ["EdDSA"],
+      requiredClaims: ["exp", "sub"],
     });
-    if (!payload || (!payload.sub && !payload.email)) {
+    if (!payload.sub) {
       return null;
     }
 
     const userEmail = String(payload.email || "").toLowerCase();
-    const userId = String(payload.sub || payload.id || "");
+    const userId = payload.sub;
 
-    const u = await findNeonUser({
-      ...(userId ? { id: userId } : {}),
-      ...(userEmail ? { email: userEmail } : {}),
-    });
-
-    const effectiveId = u?.id || userId;
+    const u = await findNeonUser({ id: userId });
 
     const effectiveName =
       u?.name || String(payload.name || userEmail.split("@")[0]);
     const effectiveEmail = u?.email || userEmail;
     const store = await prisma.stores.findFirst({
-      where: { merchant_id: effectiveId },
+      where: { merchant_id: userId },
     });
 
     let role: "admin" | "merchant" | "customer" = "customer";
@@ -71,7 +81,7 @@ export const verifyAuthToken = async (
     }
 
     return {
-      id: effectiveId,
+      id: userId,
       name: effectiveName,
       email: effectiveEmail,
       role,
@@ -110,6 +120,11 @@ export const requireAuth = async (
   next();
 };
 
+/**
+ * Attaches a verified user to req.user for a case-sensitive `Bearer ` header,
+ * trimming surrounding token whitespace. Leaves req.user unchanged when the
+ * header is absent or authentication fails, then calls next in either case.
+ */
 export const optionalAuth = async (
   req: AuthenticatedRequest,
   _res: Response,
@@ -117,7 +132,7 @@ export const optionalAuth = async (
 ): Promise<void> => {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith("Bearer ")) {
-    const token = authHeader.split(" ")[1];
+    const token = authHeader.slice("Bearer ".length).trim();
     const user = await verifyAuthToken(token);
     if (user) {
       req.user = user;
@@ -126,6 +141,14 @@ export const optionalAuth = async (
   next();
 };
 
+/**
+ * Creates middleware that calls next when req.user has one of the allowed roles.
+ * Otherwise sends a 403 JSON response with success: false and
+ * "Forbidden: Access denied" without calling next. Does not authenticate tokens;
+ * authentication middleware must populate req.user first.
+ *
+ * @param roles - Allowed roles; an empty array denies every request.
+ */
 export const requireRole = (
   roles: Array<"admin" | "merchant" | "customer">,
 ) => {
