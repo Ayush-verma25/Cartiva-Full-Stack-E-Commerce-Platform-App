@@ -59,10 +59,7 @@ export const uploadSingle = async (
     const url = await uploadToCloudinary(req.file.buffer, "Cartiva", {
       mimetype: req.file.mimetype,
       filename: req.file.originalname,
-    }).catch(
-      (error) =>
-        `data:${req.file!.mimetype};base64,${req.file!.buffer.toString("base64")}`,
-    );
+    })
 
     res.json({ success: true, message: "Image uploaded successfully", url });
   } catch (error: any) {
@@ -88,10 +85,7 @@ export const uploadMultiple = async (
         uploadToCloudinary(file.buffer, "Cartiva", {
           mimetype: file.mimetype,
           filename: file.originalname,
-        }).catch(
-          () =>
-            `data:${file.mimetype};base64,${file.buffer.toString("base64")}`,
-        ),
+        })
       ),
     );
 
