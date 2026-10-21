@@ -57,7 +57,7 @@ export const getCategories = async (
     console.error("getCategories error:", error);
     res.status(500).json({
       success: false,
-      message: error?.message || "Failed to fetch categories",
+      message: "Failed to fetch categories",
     });
   }
 };
@@ -75,7 +75,7 @@ export const createCategories = async (
 
     const { name } = req.body;
 
-    if (!name.trim()) {
+    if (typeof name !== "string" || name.trim()) {
       res
         .status(400)
         .json({ success: false, message: "Category name is required" });
@@ -93,7 +93,7 @@ export const createCategories = async (
     console.error("createCategories error:", error);
     res.status(500).json({
       success: false,
-      message: error?.message || "Failed to create category",
+      message: "Failed to create category",
     });
   }
 };
@@ -121,7 +121,7 @@ export const deleteCategories = async (
     console.error("deleteCategories error:", error);
     res.status(500).json({
       success: false,
-      message: error?.message || "Failed to delete category",
+      message: "Failed to delete category",
     });
   }
 };
