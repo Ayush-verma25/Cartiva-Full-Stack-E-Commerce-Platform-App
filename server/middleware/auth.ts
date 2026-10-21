@@ -17,6 +17,7 @@ export interface AuthenticatedRequest extends Request {
 
 const NEON_AUTH_JWKS_URL = process.env.NEON_AUTH_JWKS_URL;
 const NEON_AUTH_BASE_URL = process.env.NEON_AUTH_BASE_URL;
+const NEON_AUTH_AUDIENCE = process.env.NEON_AUTH_AUDIENCE;
 
 let neonJWKS: ReturnType<typeof createRemoteJWKSet> | null = null;
 let neonIssuer = "";
@@ -36,46 +37,40 @@ try {
 export const verifyAuthToken = async (
   token: string,
 ): Promise<AuthUser | null> => {
-  if (!token || !neonJWKS || !neonIssuer) return null;
+  if (!token || !neonJWKS || !neonIssuer || !NEON_AUTH_AUDIENCE) return null;
 
   try {
     const { payload } = await jwtVerify(token, neonJWKS, {
       issuer: neonIssuer,
+      audience: NEON_AUTH_AUDIENCE,
+      algorithms: ["EdDSA"],
+      requiredClaims: ["exp", "sub"],
     });
-    if (!payload || (!payload.sub && !payload.email)) {
+    if (!payload.sub) {
       return null;
     }
 
     const userEmail = String(payload.email || "").toLowerCase();
-    const userId = String(payload.sub || payload.id || "");
+    const userId = payload.sub;
 
-    const u = await findNeonUser({
-      ...(userId ? { id: userId } : {}),
-      ...(userEmail ? { email: userEmail } : {}),
-    });
-
-    const effectiveId = u?.id || userId;
+    const u = await findNeonUser({ id: userId });
 
     const effectiveName =
       u?.name || String(payload.name || userEmail.split("@")[0]);
     const effectiveEmail = u?.email || userEmail;
     const store = await prisma.stores.findFirst({
-      where: { merchant_id: effectiveId },
+      where: { merchant_id: userId },
     });
 
     let role: "admin" | "merchant" | "customer" = "customer";
-    if (
-      u?.role === "admin" ||
-      payload.role === "admin" ||
-      effectiveEmail.includes("admin@")
-    ) {
+    if (u?.role === "admin" || payload.role === "admin") {
       role = "admin";
     } else if (store || u?.role === "merchant" || payload.role === "merchant") {
       role = "merchant";
     }
 
     return {
-      id: effectiveId,
+      id: userId,
       name: effectiveName,
       email: effectiveEmail,
       role,
@@ -93,7 +88,7 @@ export const optionalAuth = async (
 ): Promise<void> => {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith("Bearer ")) {
-    const token = authHeader.split(" ")[1];
+    const token = authHeader.slice("Bearer ".length).trim();
     const user = await verifyAuthToken(token);
     if (user) {
       req.user = user;
@@ -102,7 +97,7 @@ export const optionalAuth = async (
   next();
 };
 
-export const requireRole = async (
+export const requireRole = (
   roles: Array<"admin" | "merchant" | "customer">,
 ) => {
   return (
