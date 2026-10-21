@@ -1,5 +1,13 @@
 import { Request, Response } from "express";
+import { randomUUID } from "node:crypto";
 import cloudinary from "../config/cloudinary.js";
+import {
+  ImageInputError,
+  isOwnedCloudinaryUrl,
+  normalizeColor,
+  validateImageBuffer,
+  validateImageUrl,
+} from "../utils/imageValidation.js";
 
 export const optimizeDeliveryUrl = (url: string): string => {
   if (!url || typeof url !== "string" || url.includes(".svg")) return url;
@@ -17,7 +25,7 @@ export function applyCloudinaryTransform(
   const transform =
     action === "bg-removal"
       ? "e_background_removal,f_auto,q_auto"
-      : `e_gen_recolor:prompt_${encodeURIComponent(options.prompt || "object")};to_color_${(options.toColor || "red").replace("#", "")}${options.multiple ? ";multiple_true" : ""}, f_auto,q_auto`;
+      : `e_gen_recolor:prompt_${encodeURIComponent(options.prompt || "object")};to_color_${normalizeColor(options.toColor)}${options.multiple ? ";multiple_true" : ""},f_auto,q_auto`;
 
   return url.replace("/image/upload/", `/image/upload/${transform}/`);
 }
@@ -25,20 +33,14 @@ export function applyCloudinaryTransform(
 export const uploadToCloudinary = async (
   fileBuffer: Buffer,
   folder: string = "Cartiva",
-  options: { mimetype?: string; filename?: string } = {},
 ): Promise<string> => {
+  await validateImageBuffer(fileBuffer);
   return new Promise((resolve, reject) => {
-    const isSvg =
-      options.mimetype === "image/svg+xml" ||
-      options.filename?.endsWith(".svg");
     const uploadStream = cloudinary.uploader.upload_stream(
-      { folder, resource_type: "image", ...(isSvg ? { format: "svg" } : {}) },
+      { folder, resource_type: "image" },
       (error, result) => {
         if (error || !result) reject(error || new Error("Upload failed"));
-        else
-          resolve(
-            isSvg ? result.secure_url : optimizeDeliveryUrl(result.secure_url),
-          );
+        else resolve(optimizeDeliveryUrl(result.secure_url));
       },
     );
     uploadStream.end(fileBuffer);
@@ -56,13 +58,14 @@ export const uploadSingle = async (
       return;
     }
 
-    const url = await uploadToCloudinary(req.file.buffer, "Cartiva", {
-      mimetype: req.file.mimetype,
-      filename: req.file.originalname,
-    })
+    const url = await uploadToCloudinary(req.file.buffer, "Cartiva");
 
     res.json({ success: true, message: "Image uploaded successfully", url });
   } catch (error: any) {
+    if (error instanceof ImageInputError) {
+      res.status(400).json({ success: false, message: error.message });
+      return;
+    }
     console.error(error?.message);
     res.status(500).json({ success: false, message: "image upload failed" });
   }
@@ -80,17 +83,17 @@ export const uploadMultiple = async (
       return;
     }
 
+    await Promise.all(files.map((file) => validateImageBuffer(file.buffer)));
     const urls = await Promise.all(
-      files.map((file) =>
-        uploadToCloudinary(file.buffer, "Cartiva", {
-          mimetype: file.mimetype,
-          filename: file.originalname,
-        })
-      ),
+      files.map((file) => uploadToCloudinary(file.buffer, "Cartiva")),
     );
 
     res.json({ success: true, message: "Images uploaded successfully", urls });
   } catch (error: any) {
+    if (error instanceof ImageInputError) {
+      res.status(400).json({ success: false, message: error.message });
+      return;
+    }
     console.error(error?.message);
     res.status(500).json({ success: false, message: "image upload failed" });
   }
@@ -102,7 +105,7 @@ export const aiTransform = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { imageUrl, action, prompt, toColor, multiple } = req.body;
+    const { imageUrl, action, prompt, toColor, multiple } = req.body || {};
 
     if (!imageUrl) {
       res
@@ -111,21 +114,15 @@ export const aiTransform = async (
       return;
     }
 
-    let baseCloudinaryUrl = imageUrl;
-    const cloudName = cloudinary.config().cloude_name;
-
-    // Ensure image is hosted on cloudinary
-    if (!cloudName || !imageUrl.includes(`res.cloudinary.com/${cloudName}/`)) {
-      const uploadResult = await cloudinary.uploader.upload(imageUrl, {
-        folder: "Cartiva/products",
-        resource_type: "image",
-      });
-      baseCloudinaryUrl = uploadResult.secure_url;
+    if (action !== "recolor" && action !== "bg-removal") {
+      throw new ImageInputError("action must be recolor or bg-removal");
     }
+    const color = action === "recolor" ? normalizeColor(toColor) : undefined;
+    const baseCloudinaryUrl = await ensureCloudinaryUrl(imageUrl, "Cartiva/products");
 
     const transformedUrl = applyCloudinaryTransform(baseCloudinaryUrl, action, {
       prompt,
-      toColor,
+      toColor: color,
       multiple: Boolean(multiple),
     });
 
@@ -136,6 +133,10 @@ export const aiTransform = async (
       action,
     });
   } catch (error: any) {
+    if (error instanceof ImageInputError) {
+      res.status(400).json({ success: false, message: error.message });
+      return;
+    }
     console.error(error?.message);
     res
       .status(500)
@@ -147,14 +148,13 @@ const ensureCloudinaryUrl = async (
   url: string,
   folder = "Cartiva/tryon",
 ): Promise<string> => {
-  const cloudName = cloudinary.config().cloude_name;
-  if (cloudName && url.includes(`res.cloudinary.com/${cloudName}/`)) {
-    return url;
+  const cloudName = cloudinary.config().cloud_name;
+  const parsed = validateImageUrl(url, cloudName);
+  if (isOwnedCloudinaryUrl(parsed, cloudName)) {
+    return parsed.href;
   }
-  const res = await cloudinary.uploader
-    .upload(url, { folder, resource_type: "image" })
-    .catch(() => null);
-  return res?.secure_url || url;
+  const res = await cloudinary.uploader.upload(parsed.href, { folder, resource_type: "image" });
+  return res.secure_url;
 };
 
 export interface GenerateOnModelParams {
@@ -180,8 +180,7 @@ export const generateOnModelImage = async (
     throw new Error("Cloudinary instance credentials are not configured");
   }
 
-  const targetPublicId =
-    params.targetPublicId?.trim() || `tryOn/model_${Date.now()}`;
+  const targetPublicId = `tryOn/model_${randomUUID()}`;
   const payload = {
     prompt: params.prompt,
     reference_images: [
@@ -201,8 +200,9 @@ export const generateOnModelImage = async (
       method: "POST",
       headers: {
         Authorization: `Basic ${Buffer.from(`${api_key}:${api_secret}`).toString("base64")}`,
-        Content_Type: "application/json",
+        "Content-Type": "application/json",
       },
+      signal: AbortSignal.timeout(60_000),
       body: JSON.stringify(payload),
     },
   );
@@ -244,8 +244,7 @@ export const aiOnModel = async (req: Request, res: Response): Promise<void> => {
       background,
       customPrompt,
       preference,
-      targetPublicId,
-    } = req.body;
+    } = req.body || {};
 
     if (!productImageUrl) {
       res
@@ -257,23 +256,27 @@ export const aiOnModel = async (req: Request, res: Response): Promise<void> => {
     const defaultModel =
       "https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?q=80&w=687&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=NHwxMjA3fDA%3D";
 
+    // Validate both inputs before either can trigger a remote upload.
+    const cloudName = cloudinary.config().cloud_name;
+    const modelSource = modelImageUrl === undefined ? defaultModel : modelImageUrl;
+    validateImageUrl(productImageUrl, cloudName);
+    validateImageUrl(modelSource, cloudName);
+
     const [modelUrl, productUrl] = await Promise.all([
-      ensureCloudinaryUrl(modelImageUrl || defaultModel, "Cartiva/models"),
+      ensureCloudinaryUrl(modelSource, "Cartiva/models"),
       ensureCloudinaryUrl(productImageUrl, "Cartiva/products"),
     ]);
 
     const prompt = customPrompt?.trim()
       ? customPrompt.includes("[1]") && customPrompt.includes("[2]")
         ? customPrompt.trim()
-        : `Dress person in [1] in garment ftom [2], ${customPrompt.trim()},
-        photorealistic.`
+        : `Dress person in [1] in garment from [2], ${customPrompt.trim()}, photorealistic.`
       : `Dress person in [1] in ${garmentType || "garment"} from [2], pose ${pose || "confident standing position"}, background ${background || "clean white"}, photorealistic.`;
 
     const result = await generateOnModelImage({
       prompt,
       modelImageUrl: modelUrl,
       productImageUrl: productUrl,
-      targetPublicId,
       preference,
     });
 
@@ -288,6 +291,10 @@ export const aiOnModel = async (req: Request, res: Response): Promise<void> => {
       limits: result.limits,
     });
   } catch (error: any) {
+    if (error instanceof ImageInputError) {
+      res.status(400).json({ success: false, message: error.message });
+      return;
+    }
     console.log(error?.message);
     res
       .status(500)
