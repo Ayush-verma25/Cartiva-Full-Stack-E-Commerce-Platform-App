@@ -92,6 +92,34 @@ export const verifyAuthToken = async (
   }
 };
 
+export const requireAuth = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    res
+      .status(401)
+      .json({ success: false, message: "Unauthorized: No token provided" });
+    return;
+  }
+
+  const token = authHeader.split(" ")[1];
+  const user = await verifyAuthToken(token);
+
+  if (!user) {
+    res.status(401).json({
+      success: false,
+      message: "Unauthorized: Invalid or expired token",
+    });
+    return;
+  }
+
+  req.user = user;
+  next();
+};
+
 /**
  * Attaches a verified user to req.user for a case-sensitive `Bearer ` header,
  * trimming surrounding token whitespace. Leaves req.user unchanged when the
