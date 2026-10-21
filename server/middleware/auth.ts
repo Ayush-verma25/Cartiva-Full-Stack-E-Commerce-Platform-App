@@ -64,11 +64,7 @@ export const verifyAuthToken = async (
     });
 
     let role: "admin" | "merchant" | "customer" = "customer";
-    if (
-      u?.role === "admin" ||
-      payload.role === "admin" ||
-      effectiveEmail.includes("admin@")
-    ) {
+    if (u?.role === "admin" || payload.role === "admin") {
       role = "admin";
     } else if (store || u?.role === "merchant" || payload.role === "merchant") {
       role = "merchant";
@@ -84,6 +80,34 @@ export const verifyAuthToken = async (
   } catch {
     return null;
   }
+};
+
+export const requireAuth = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    res
+      .status(401)
+      .json({ success: false, message: "Unauthorized: No token provided" });
+    return;
+  }
+
+  const token = authHeader.split(" ")[1];
+  const user = await verifyAuthToken(token);
+
+  if (!user) {
+    res.status(401).json({
+      success: false,
+      message: "Unauthorized: Invalid or expired token",
+    });
+    return;
+  }
+
+  req.user = user;
+  next();
 };
 
 export const optionalAuth = async (
@@ -102,7 +126,7 @@ export const optionalAuth = async (
   next();
 };
 
-export const requireRole = async (
+export const requireRole = (
   roles: Array<"admin" | "merchant" | "customer">,
 ) => {
   return (
