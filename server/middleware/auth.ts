@@ -33,7 +33,18 @@ try {
   console.warn("Neon Auth JWKS initialization warning:", e);
 }
 
-// verifies authentication token using Neon Auth JWKS (jose jwtVerify)
+/**
+ * Verifies an EdDSA JWT against the configured Neon issuer, audience, and JWKS,
+ * requiring expiration and subject claims. Looks up the user and store by subject;
+ * missing user details fall back to token claims or the email local part for name.
+ * Admin status from either the user record or token takes precedence, followed by
+ * merchant status from either source or store ownership; otherwise uses customer.
+ *
+ * @param token - JWT without the Bearer prefix.
+ * @returns The resolved user with a store ID, or null for that ID when absent or
+ * the user is an admin. Returns null for missing configuration, invalid tokens
+ * (including non-UUID subjects), or verification and database lookup errors.
+ */
 export const verifyAuthToken = async (
   token: string,
 ): Promise<AuthUser | null> => {
@@ -81,6 +92,11 @@ export const verifyAuthToken = async (
   }
 };
 
+/**
+ * Attaches a verified user to req.user for a case-sensitive `Bearer ` header,
+ * trimming surrounding token whitespace. Leaves req.user unchanged when the
+ * header is absent or authentication fails, then calls next in either case.
+ */
 export const optionalAuth = async (
   req: AuthenticatedRequest,
   _res: Response,
@@ -97,6 +113,14 @@ export const optionalAuth = async (
   next();
 };
 
+/**
+ * Creates middleware that calls next when req.user has one of the allowed roles.
+ * Otherwise sends a 403 JSON response with success: false and
+ * "Forbidden: Access denied" without calling next. Does not authenticate tokens;
+ * authentication middleware must populate req.user first.
+ *
+ * @param roles - Allowed roles; an empty array denies every request.
+ */
 export const requireRole = (
   roles: Array<"admin" | "merchant" | "customer">,
 ) => {
