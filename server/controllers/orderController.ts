@@ -307,7 +307,7 @@ export const getCustomerOrders = async (
               {
                 customer_email: {
                   equals: userEmail,
-                  node: "insensitive" as const,
+                  mode: "insensitive" as const,
                 },
               },
             ]
