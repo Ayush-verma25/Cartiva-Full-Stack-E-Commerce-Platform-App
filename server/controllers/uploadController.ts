@@ -106,6 +106,16 @@ export const aiTransform = async (
 ): Promise<void> => {
   try {
     const { imageUrl, action, prompt, toColor, multiple } = req.body || {};
+    let validatedPrompt: string | undefined;
+
+    if (prompt !== undefined) {
+      if (typeof prompt !== "string" || !/^[A-Za-z0-9 _-]{1,100}$/.test(prompt)) {
+        throw new ImageInputError(
+          "prompt must be 1-100 letters, digits, spaces, underscores, or hyphens",
+        );
+      }
+      validatedPrompt = prompt;
+    }
 
     if (!imageUrl) {
       res
@@ -121,7 +131,7 @@ export const aiTransform = async (
     const baseCloudinaryUrl = await ensureCloudinaryUrl(imageUrl, "Cartiva/products");
 
     const transformedUrl = applyCloudinaryTransform(baseCloudinaryUrl, action, {
-      prompt,
+      prompt: validatedPrompt,
       toColor: color,
       multiple: Boolean(multiple),
     });
@@ -245,6 +255,13 @@ export const aiOnModel = async (req: Request, res: Response): Promise<void> => {
       customPrompt,
       preference,
     } = req.body || {};
+
+    if (customPrompt !== undefined && typeof customPrompt !== "string") {
+      throw new ImageInputError("customPrompt must be a string");
+    }
+    if (typeof customPrompt === "string" && customPrompt.length > 500) {
+      throw new ImageInputError("customPrompt must be 500 characters or fewer");
+    }
 
     if (!productImageUrl) {
       res

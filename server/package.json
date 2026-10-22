@@ -4,7 +4,7 @@
   "description": "",
   "main": "server.js",
   "scripts": {
-    "postinstall": "npx prisma generate",
+    "postinstall": "prisma generate",
     "start": "tsx server.ts",
     "server": "nodemon --exec tsx server.ts",
     "build": "tsc",
@@ -25,7 +25,8 @@
     "file-type": "^22.2.0",
     "jose": "^6.2.13",
     "multer": "^2.4.0",
-    "pg": "^8.23.1"
+    "pg": "^8.23.1",
+    "prisma": "^7.10.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
@@ -34,7 +35,6 @@
     "@types/node": "^26.6.5",
     "@types/pg": "^8.23.1",
     "nodemon": "^3.1.14",
-    "prisma": "^7.10.1",
     "ts-node": "^10.9.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"

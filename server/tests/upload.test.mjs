@@ -116,6 +116,26 @@ test("color injection and invalid actions return 400 before uploads", async () =
   assertNoProviderCalls();
 });
 
+test("AI recolor prompt accepts only the restricted 1-100 character format", async () => {
+  const valid = await post("/ai-transform", {
+    imageUrl: owned,
+    action: "recolor",
+    prompt: "red wool_coat-2",
+  });
+  assert.equal(valid.status, 200);
+  assert.ok(valid.body.url.includes("prompt_red%20wool_coat-2;"));
+
+  for (const prompt of ["", "x".repeat(101), "two words!", "red/blue", 123, null, [], {}]) {
+    const res = await post("/ai-transform", {
+      imageUrl: owned,
+      action: "recolor",
+      prompt,
+    });
+    assert.equal(res.status, 400, String(prompt));
+  }
+  assertNoProviderCalls();
+});
+
 const invalidUrls = [
   "not a URL", "http://images.unsplash.com/photo", "ftp://images.unsplash.com/photo",
   "data:image/png;base64,aGVsbG8=", "file:///etc/passwd", "https://127.0.0.1/image",
@@ -125,6 +145,8 @@ const invalidUrls = [
   "https://evil.test/?image=https://res.cloudinary.com/cartiva-test/a.png",
   "https://res.cloudinary.com/cartiva-test-other/image/upload/a.png",
   "https://res.cloudinary.com/other-cloud/image/upload/a.png",
+  "https://res.cloudinary.com/cartiva-test/image/fetch/https://images.unsplash.com/photo.png",
+  "https://res.cloudinary.com/cartiva-test/video/upload/sample.mp4",
   "https://res.cloudinary.com/cartiva-test/../other-cloud/image/upload/a.png",
   "https://res.cloudinary.com@evil.test/cartiva-test/image/upload/a.png",
   "https://user:pass@res.cloudinary.com/cartiva-test/image/upload/a.png",
@@ -185,11 +207,29 @@ test("a failure among multiple uploads returns 500", async () => {
 });
 
 test("valid file bytes determine upload handling regardless of client metadata", async () => {
-  const res = await post("/single", filesForm([[png, "image/svg+xml", "fake.svg"]]));
+  const res = await post("/single", filesForm([[png, "text/plain", "photo.txt"]]));
   assert.equal(res.status, 200);
   assert.equal(res.body.success, true);
   assert.ok(res.body.url.includes("/f_auto,q_auto/"));
   assert.deepEqual(streamUpload.mock.calls[0].arguments[0], { folder: "Cartiva", resource_type: "image" });
+});
+
+test("Multer errors return JSON with the appropriate client status", async () => {
+  const wrongField = await post(
+    "/single",
+    filesForm([[png, "image/png", "photo.png"]], "unexpected"),
+  );
+  assert.equal(wrongField.status, 400);
+  assert.equal(wrongField.body.success, false);
+  assert.equal(typeof wrongField.body.message, "string");
+
+  const oversized = await post(
+    "/single",
+    filesForm([[Buffer.alloc(10 * 1024 * 1024 + 1), "image/png", "large.png"]]),
+  );
+  assert.equal(oversized.status, 413);
+  assert.equal(oversized.body.success, false);
+  assert.equal(typeof oversized.body.message, "string");
 });
 
 test("non-image MIME types return 400 JSON for single and multiple uploads", async () => {
@@ -267,6 +307,19 @@ test("on-model prompts trim custom text and have correct spelling and no newline
   assert.equal(remoteUpload.mock.callCount(), 0);
   const custom = await post("/ai-on-model", { productImageUrl: owned, modelImageUrl: owned, customPrompt: "  Use [1] with [2].  " });
   assert.equal(custom.body.prompt, "Use [1] with [2].");
+});
+
+test("on-model custom prompt rejects non-strings and values over the length limit", async () => {
+  for (const customPrompt of [null, 123, [], {}, "x".repeat(501)]) {
+    const res = await post("/ai-on-model", {
+      productImageUrl: owned,
+      modelImageUrl: owned,
+      customPrompt,
+    });
+    assert.equal(res.status, 400, String(customPrompt));
+  }
+  assert.equal(generation.mock.callCount(), 0);
+  assert.equal(remoteUpload.mock.callCount(), 0);
 });
 
 test("default model image uses the allowlisted host", async () => {

@@ -1,9 +1,10 @@
 import "dotenv/config";
-import express, { NextFunction, Request, Response } from "express";
+import express, { Request, Response } from "express";
 import cors from "cors";
 import categoryRouter from "./routes/categoryRoutes.js";
 import uploadRouter from "./routes/uploadRoutes.js";
-import { ImageInputError } from "./utils/imageValidation.js";
+import storeRouter from "./routes/storeRoutes.js";
+import productRouter from "./routes/productRoutes.js";
 
 const app = express();
 
@@ -21,14 +22,8 @@ app.get("/", (req: Request, res: Response) => {
 // API Routes
 app.use("/api/categories", categoryRouter);
 app.use("/api/upload", uploadRouter);
-
-app.use((error: unknown, req: Request, res: Response, next: NextFunction) => {
-  if (error instanceof ImageInputError) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
-  next(error);
-});
+app.use("/api/stores", storeRouter);
+app.use("/api/products", productRouter);
 
 app.listen(port, () => {
   console.log(`Server is running at http://localhost:${port}`);
