@@ -78,6 +78,14 @@ export const createStore = async (
 
     const finalSlug = slug ? generateSlug(slug) : generateSlug(name);
 
+    if (!finalSlug) {
+      res.status(400).json({
+        success: false,
+        message: "Store URL slug must not be empty",
+      });
+      return;
+    }
+
     // check if slug is taken
 
     const slugCheck = await prisma.stores.findUnique({
@@ -92,6 +100,9 @@ export const createStore = async (
       });
       return;
     }
+
+    // Update User role to merchant
+    await updateNeonUserRole(merchantId, "merchant");
 
     const newStore = await prisma.stores.create({
       data: {
@@ -111,9 +122,6 @@ export const createStore = async (
         accent_color: accent_color.trim() || "#059669",
       },
     });
-
-    // Update User role to merchant
-    await updateNeonUserRole(merchantId, "merchant");
 
     res.status(201).json({
       success: true,
@@ -135,7 +143,7 @@ export const getMyStore = async (
   res: Response,
 ): Promise<void> => {
   try {
-    if (req.user?.role !== "admin") {
+    if (req.user?.role === "admin") {
       res.status(403).json({
         success: false,
         message: "Forbidden: Platform admin do not manage merchant stores",

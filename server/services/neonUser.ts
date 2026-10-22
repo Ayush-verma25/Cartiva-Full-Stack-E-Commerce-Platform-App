@@ -64,6 +64,7 @@ export const updateNeonUserRole = async (
     `;
   } catch (e) {
     console.error(e);
+    throw e;
   }
 };
 
@@ -99,6 +100,7 @@ export const findNeonMerchants = async () : Promise<NeonUserRecord[]> =>{
     WHERE role = 'merchant'
     ORDER BY "createdAt" DESC`
   } catch (e) {
-    return [];
+    console.error(e);
+    throw e;
   }
 }
