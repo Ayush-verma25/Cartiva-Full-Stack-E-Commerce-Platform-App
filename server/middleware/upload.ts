@@ -1,31 +1,32 @@
-import multer, { FileFilterCallback } from "multer";
-import type { Request } from "express";
+import multer from "multer";
 import type { RequestHandler } from "express";
 import { ImageInputError, validateImageBuffer } from "../utils/imageValidation.js";
 
-const storage = multer.memoryStorage();
-
-const maxFileSize = 10485760; // 10MB
-
-const fileFilter = (
-  req: Request,
-  file: Express.Multer.File,
-  cb: FileFilterCallback,
-): void => {
-  if (file.mimetype.startsWith("image/")) {
-    cb(null, true);
-  } else {
-    cb(new Error("Invalid file type. Only image files are allowed."));
-  }
-};
-
-export const upload = multer({
-  storage,
-  fileFilter,
-  limits: {
-    fileSize: maxFileSize,
-  },
+const multerUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10485760 },
 });
+
+const wrapMulterHandler = (handler: RequestHandler): RequestHandler =>
+  (req, res, next) => {
+    handler(req, res, (error) => {
+      if (error instanceof multer.MulterError) {
+        res.status(error.code === "LIMIT_FILE_SIZE" ? 413 : 400).json({
+          success: false,
+          message: error.message,
+        });
+        return;
+      }
+      next(error);
+    });
+  };
+
+export const upload = {
+  single: (fieldName: string): RequestHandler =>
+    wrapMulterHandler(multerUpload.single(fieldName)),
+  array: (fieldName: string, maxCount?: number): RequestHandler =>
+    wrapMulterHandler(multerUpload.array(fieldName, maxCount)),
+};
 
 export const validateUploadedImages: RequestHandler = async (req, res, next) => {
   const files = req.file ? [req.file] : (req.files as Express.Multer.File[] || []);

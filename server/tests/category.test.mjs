@@ -162,6 +162,15 @@ test("listing by slug retains precedence and product counts", async () => {
   }
 });
 
+test("non-string store slugs return 400 before the store lookup", async () => {
+  for (const storeSlug of [null, 123, [], ["books"], {}]) {
+    const res = await invoke(getCategories, { query: { storeSlug } });
+    assert.equal(res.statusCode, 400);
+    assert.deepEqual(res.body, { success: false, message: "Invalid store slug" });
+    assertNoQueries();
+  }
+});
+
 test("listing with a missing store slug returns 404 without fetching categories", async () => {
   findStoreBySlug.mock.mockImplementation(async () => null);
   const res = await invoke(getCategories, { query: { storeSlug: "missing" } });

@@ -27,7 +27,7 @@ export function validateImageUrl(value: unknown, cloudName?: string): URL {
 export function isOwnedCloudinaryUrl(url: URL, cloudName?: string): boolean {
   return Boolean(
     cloudName && url.hostname === "res.cloudinary.com" &&
-    url.pathname.startsWith(`/${cloudName}/`),
+    url.pathname.startsWith(`/${cloudName}/image/upload/`),
   );
 }
 

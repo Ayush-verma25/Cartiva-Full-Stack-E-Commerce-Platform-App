@@ -9,6 +9,8 @@ const generateSlug = (text: string) =>
     .trim()
     .replace(/\s+/g, "-")
     .replace(/[^\w\-]+/g, "");
+
+    
 const parseId = (value: unknown): number | null => {
   if (typeof value !== "string" && typeof value !== "number") return null;
   const id = Number(value);
@@ -31,9 +33,14 @@ export const getCategories = async (
       return;
     }
 
+    if (storeSlug !== undefined && typeof storeSlug !== "string") {
+      res.status(400).json({ success: false, message: "Invalid store slug" });
+      return;
+    }
+
     if (storeSlug) {
       const store = await prisma.stores.findUnique({
-        where: { slug: storeSlug as string },
+        where: { slug: storeSlug },
         select: { id: true },
       });
       if (!store) {

@@ -8,7 +8,8 @@ export interface NeonUserRecord {
   createdAt?: Date | null;
 }
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Finds a Neon user by nonempty ID, or by email when no nonempty ID is supplied.
@@ -50,3 +51,54 @@ export const findNeonUser = async (filter: {
   }
   return null;
 };
+
+export const updateNeonUserRole = async (
+  userId: string,
+  role: string,
+): Promise<void> => {
+  try {
+    await prisma.$executeRaw`
+    UPDATE neon_auth_user
+    SET role = ${role}, "updatedAt" = NOW()
+    WHERE id = ${userId}::uuid AND (role IS NULL OR role != 'admin')
+    `;
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+export const findNeonUsersByIds = async (
+  ids: string[],
+): Promise<Record<string, NeonUserRecord>> => {
+  if (!ids || ids.length === 0) return {};
+  try {
+    const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+    const rows = await prisma.$queryRaw<NeonUserRecord[]>`
+    SELECT id, name, email, role, "createdAt" as "createdAt"
+    FROM neon_auth_user
+    WHERE id::text = ANY(${uniqueIds})
+    `;
+
+    const map: Record<string, NeonUserRecord> = {};
+    for (const row of rows) {
+      map[row.id] = row;
+    }
+
+    return map;
+  } catch (e) {
+    console.error(e);
+    return {};
+  }
+};
+
+export const findNeonMerchants = async () : Promise<NeonUserRecord[]> =>{
+  try {
+    return await prisma.$queryRaw<NeonUserRecord[]>`
+    SELECT id, name, email, role, "createdAt" as "createdAt"
+    FROM neon_auth_user
+    WHERE role = 'merchant'
+    ORDER BY "createdAt" DESC`
+  } catch (e) {
+    return [];
+  }
+}
