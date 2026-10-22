@@ -4,7 +4,7 @@ import { ImageInputError, validateImageBuffer } from "../utils/imageValidation.j
 
 const multerUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10485760 },
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
 });
 
 const wrapMulterHandler = (handler: RequestHandler): RequestHandler =>
@@ -29,7 +29,8 @@ export const upload = {
 };
 
 export const validateUploadedImages: RequestHandler = async (req, res, next) => {
-  const files = req.file ? [req.file] : (req.files as Express.Multer.File[] || []);
+  const files = req.file ? [req.file] : ((req.files as Express.Multer.File[]) || []);
+
   try {
     await Promise.all(files.map((file) => validateImageBuffer(file.buffer)));
     next();
