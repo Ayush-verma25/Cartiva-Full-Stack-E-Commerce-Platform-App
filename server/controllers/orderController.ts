@@ -280,7 +280,13 @@ export const getCustomerOrders = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { id: userId, email: userEmail } = req.user!;
+    if (!req.user) {
+      res
+        .status(401)
+        .json({ success: false, message: "Authentication required" });
+      return;
+    }
+    const { id: userId, email: userEmail } = req.user;
     const { storeSlug, storeId } = req.query!;
 
     const targetStore = storeSlug
