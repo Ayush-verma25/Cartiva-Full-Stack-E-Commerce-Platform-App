@@ -41,6 +41,19 @@ export const createProduct = async (
       return;
     }
 
+    if (category_id) {
+      const category = await prisma.categories.findFirst({
+        where: { id: Number(category_id), store_id: store.id },
+      });
+      if (!category) {
+        res.status(404).json({
+          success: false,
+          message: "Category not found or access denied",
+        });
+        return;
+      }
+    }
+
     const product = await prisma.products.create({
       data: {
         store_id: store.id,
@@ -108,6 +121,19 @@ export const updateProduct = async (
       variants,
       status,
     } = req.body;
+
+    if (category_id) {
+      const category = await prisma.categories.findFirst({
+        where: { id: Number(category_id), store_id: store.id },
+      });
+      if (!category) {
+        res.status(400).json({
+          success: false,
+          message: "Category not found or access denied",
+        });
+        return;
+      }
+    }
 
     const updated = await prisma.products.update({
       where: { id: Number(id) },
@@ -181,12 +207,10 @@ export const deleteProduct = async (
       where: { id: Number(req.params.id), store_id: store.id },
     });
     if (deleted.count === 0) {
-      res
-        .status(404)
-        .json({
-          success: false,
-          message: "Product not found or access denied",
-        });
+      res.status(404).json({
+        success: false,
+        message: "Product not found or access denied",
+      });
       return;
     }
 
