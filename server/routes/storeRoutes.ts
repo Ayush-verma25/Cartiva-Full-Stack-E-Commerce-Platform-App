@@ -19,7 +19,7 @@ storeRouter.get("/me", requireAuth, getMyStore);
 storeRouter.put("/me", requireAuth, updateMyStore);
 
 // Platform Admin routes
-storeRouter.get("admin/all", requireAuth, requireRole(["admin"]), getAllStores);
+storeRouter.get("/admin/all", requireAuth, requireRole(["admin"]), getAllStores);
 storeRouter.get(
   "/admin/merchants",
   requireAuth,
