@@ -1,9 +1,20 @@
+import { randomBytes } from "node:crypto";
 import { Response } from "express";
 import { AuthenticatedRequest } from "../middleware/auth.js";
 import { prisma } from "../config/prisma.js";
+import type { Prisma } from "../generated/prisma/client.js";
 
 const generateOrderNumber = () =>
-  `ORD-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
+  `ORD-${Date.now().toString(36).toUpperCase()}-${randomBytes(16).toString("hex").toUpperCase()}`;
+
+class OrderCreationError extends Error {
+  constructor(
+    public statusCode: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 const findStore = (where: { slug?: string; id?: number }) =>
   prisma.stores.findUnique({ where: where as any });
@@ -21,10 +32,20 @@ export const createOrder = async (
       customerEmail,
       customerPhone,
       shippingAddress,
-    } = req.body;
+    } = req.body ?? {};
 
-    if (!items?.length) {
+    if (!Array.isArray(items) || items.length === 0) {
       res.status(400).json({ success: false, message: "No items in order" });
+      return;
+    }
+
+    if (
+      items.some((item) => !Number.isInteger(item?.quantity) || item.quantity < 1)
+    ) {
+      res.status(400).json({
+        success: false,
+        message: "Each item quantity must be an integer of at least one",
+      });
       return;
     }
 
@@ -56,87 +77,92 @@ export const createOrder = async (
       return;
     }
 
-    let subtotal = 0;
-    const processedItems = [];
+    const order = await prisma.$transaction(async (tx) => {
+      let subtotal = 0;
+      const processedItems = [];
 
-    for (const item of items) {
-      const product = await prisma.products.findFirst({
-        where: { id: Number(item.productId), store_id: targetStore.id },
-      });
-      if (!product) {
-        res
-          .status(404)
-          .json({
-            success: false,
-            message: `Product ${item.name || item.productId} no longer exists`,
-          });
-        return;
+      for (const item of items) {
+        const product = await tx.products.findFirst({
+          where: {
+            id: Number(item.productId),
+            store_id: targetStore.id,
+            status: "active",
+          },
+        });
+        if (!product) {
+          throw new OrderCreationError(
+            404,
+            `Product ${item.name || item.productId} is no longer available`,
+          );
+        }
+
+        const qty = item.quantity;
+        const stockUpdate = await tx.products.updateMany({
+          where: {
+            id: product.id,
+            store_id: targetStore.id,
+            status: "active",
+            stock: { gte: qty },
+          },
+          data: { stock: { decrement: qty } },
+        });
+        if (stockUpdate.count === 0) {
+          throw new OrderCreationError(400, `Not enough stock for ${product.name}`);
+        }
+
+        const itemPrice = Number(product.price);
+        subtotal += itemPrice * qty;
+        const images = Array.isArray(product.images)
+          ? (product.images as string[])
+          : [];
+
+        processedItems.push({
+          productId: product.id,
+          name: product.name,
+          price: itemPrice,
+          quantity: qty,
+          variant: item.variant || null,
+          image: images[0] || null,
+        });
       }
 
-      const qty = Math.max(1, Number(item.quantity) || 1);
-      if ((product.stock ?? 0) < qty) {
-        res
-          .status(400)
-          .json({
-            success: false,
-            message: `Not enough stock for ${item.name}. Available: ${product.stock}`,
-          });
-        return;
-      }
+      const shippingFee = Number(targetStore.shipping_fee) || 0;
+      const freeThreshold = Number(targetStore.free_shipping_threshold) || 0;
+      const shippingCost =
+        freeThreshold > 0 && subtotal >= freeThreshold ? 0 : shippingFee;
+      const total = Math.max(0, subtotal + shippingCost);
+      const customerId = req.user?.id || null;
 
-      const itemPrice = Number(product.price);
-      subtotal += itemPrice * qty;
-      const images = Array.isArray(product.images)
-        ? (product.images as string[])
-        : [];
-
-      processedItems.push({
-        productId: product.id,
-        name: product.name,
-        price: itemPrice,
-        quantity: qty,
-        variant: item.variant || null,
-        image: images[0] || null,
+      return tx.orders.create({
+        data: {
+          order_number: generateOrderNumber(),
+          store_id: targetStore.id,
+          customer_id: customerId,
+          customer_name: customerName.trim(),
+          customer_email: customerEmail.trim().toLowerCase(),
+          customer_phone: customerPhone || null,
+          shipping_address: shippingAddress,
+          items: processedItems,
+          subtotal,
+          discount: 0,
+          shipping_cost: shippingCost,
+          total,
+          coupon_code: null,
+          payment_status: "pending",
+          payment_method: "cod",
+          order_status: "placed",
+        },
       });
-
-      await prisma.products.update({
-        where: { id: product.id },
-        data: { stock: { decrement: qty } },
-      });
-    }
-
-    const shippingFee = Number(targetStore.shipping_fee) || 0;
-    const freeThreshold = Number(targetStore.free_shipping_threshold) || 0;
-    const shippingCost =
-      freeThreshold > 0 && subtotal >= freeThreshold ? 0 : shippingFee;
-    const total = Math.max(0, subtotal + shippingCost);
-    const customerId = req.user?.id || null;
-
-    const order = await prisma.orders.create({
-      data: {
-        order_number: generateOrderNumber(),
-        store_id: targetStore.id,
-        customer_id: customerId,
-        customer_name: customerName.trim(),
-        customer_email: customerEmail.trim().toLowerCase(),
-        customer_phone: customerPhone || null,
-        shipping_address: shippingAddress,
-        items: processedItems,
-        subtotal,
-        discount: 0,
-        shipping_cost: shippingCost,
-        total,
-        coupon_code: null,
-        payment_status: "pending",
-        payment_method: "cod",
-        order_status: "placed",
-      },
     });
 
     res
       .status(201)
       .json({ success: true, message: "Order created successfully", order });
   } catch (error: any) {
+    if (error instanceof OrderCreationError) {
+      res.status(error.statusCode).json({ success: false, message: error.message });
+      return;
+    }
     console.error("createOrder error:", error);
     res.status(500).json({ success: false, message: "Failed to create order" });
   }
@@ -180,6 +206,40 @@ export const updateOrderStatus = async (
   res: Response,
 ): Promise<void> => {
   try {
+    const id = Number(req.params.id);
+    const { order_status, tracking_number, payment_status } = req.body ?? {};
+
+    if (!Number.isInteger(id)) {
+      res.status(400).json({ success: false, message: "Invalid order ID" });
+      return;
+    }
+
+    const orderStatuses = [
+      "placed", "confirmed", "processing", "shipped", "delivered", "cancelled",
+    ];
+    const paymentStatuses = ["pending", "paid", "failed", "refunded"];
+    if (
+      (order_status !== undefined && !orderStatuses.includes(order_status)) ||
+      (payment_status !== undefined && !paymentStatuses.includes(payment_status))
+    ) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid order or payment status",
+      });
+      return;
+    }
+
+    if (
+      tracking_number !== undefined &&
+      (typeof tracking_number !== "string" || tracking_number.length > 100)
+    ) {
+      res.status(400).json({
+        success: false,
+        message: "Tracking number must be a string no longer than 100 characters",
+      });
+      return;
+    }
+
     const store = await prisma.stores.findFirst({
       where: { merchant_id: req.user?.id },
     });
@@ -189,12 +249,8 @@ export const updateOrderStatus = async (
       return;
     }
 
-    const { id } = req.params;
-
-    const { order_status, tracking_number, payment_status } = req.body;
-
     const existing = await prisma.orders.findFirst({
-      where: { id: Number(id), store_id: store.id },
+      where: { id, store_id: store.id },
     });
 
     if (!existing) {
@@ -203,7 +259,7 @@ export const updateOrderStatus = async (
     }
 
     const updated = await prisma.orders.update({
-      where: { id: Number(id) },
+      where: { id },
       data: {
         order_status: order_status || existing.order_status,
         tracking_number:
@@ -233,9 +289,8 @@ export const getOrderReceipt = async (
 ): Promise<void> => {
   try {
     const ident = String(req.params.orderIdentifier);
-    const parsedId = !isNaN(Number(ident)) ? Number(ident) : -1;
     const raw = await prisma.orders.findFirst({
-      where: { OR: [{ order_number: ident }, { id: parsedId }] },
+      where: { order_number: ident },
       include: {
         stores: {
           select: {
@@ -286,6 +341,7 @@ export const getCustomerOrders = async (
         .json({ success: false, message: "Authentication required" });
       return;
     }
+
     const { id: userId, email: userEmail } = req.user;
     const { storeSlug, storeId } = req.query!;
 
@@ -299,7 +355,7 @@ export const getCustomerOrders = async (
           })
         : null;
 
-    const whereClause: any = {
+    const whereClause: Prisma.ordersWhereInput = {
       OR: [
         { customer_id: userId },
         ...(userEmail
