@@ -2,6 +2,34 @@ import { Response } from "express";
 import { AuthenticatedRequest } from "../middleware/auth.js";
 import { prisma } from "../config/prisma.js";
 
+const isNonNegativeNumber = (value: unknown): boolean =>
+  (typeof value === "number" ||
+    (typeof value === "string" && value.trim() !== "")) &&
+  Number.isFinite(Number(value)) &&
+  Number(value) >= 0;
+
+const validateProductInput = (
+  { name, price, stock }: { name?: unknown; price?: unknown; stock?: unknown },
+  partial = false,
+): string | null => {
+  if (
+    (!partial || name !== undefined) &&
+    (typeof name !== "string" || !name.trim())
+  ) {
+    return "Product name must be a non-empty string";
+  }
+  if ((!partial || price !== undefined) && !isNonNegativeNumber(price)) {
+    return "Product price must be a finite non-negative number";
+  }
+  if (
+    stock !== undefined &&
+    (!isNonNegativeNumber(stock) || !Number.isInteger(Number(stock)))
+  ) {
+    return "Product stock must be a non-negative integer";
+  }
+  return null;
+};
+
 const getMerchantStore = (merchantId: string) =>
   prisma.stores.findFirst({ where: { merchant_id: merchantId } });
 
@@ -10,16 +38,6 @@ export const createProduct = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const store = await getMerchantStore(req.user!.id);
-
-    if (!store) {
-      res.status(404).json({
-        success: false,
-        message: "You must create a store before adding products",
-      });
-      return;
-    }
-
     const {
       name,
       description,
@@ -31,14 +49,38 @@ export const createProduct = async (
       images = [],
       variants = [],
       status = "active",
-    } = req.body;
+    } = req.body ?? {};
 
-    if (!name || price === undefined) {
+    const validationError = validateProductInput({ name, price, stock });
+    if (validationError) {
       res.status(400).json({
         success: false,
-        message: "Product name and price are required",
+        message: validationError,
       });
       return;
+    }
+
+    const store = await getMerchantStore(req.user!.id);
+
+    if (!store) {
+      res.status(404).json({
+        success: false,
+        message: "You must create a store before adding products",
+      });
+      return;
+    }
+
+    if (category_id) {
+      const category = await prisma.categories.findFirst({
+        where: { id: Number(category_id), store_id: store.id },
+      });
+      if (!category) {
+        res.status(404).json({
+          success: false,
+          message: "Category not found or access denied",
+        });
+        return;
+      }
     }
 
     const product = await prisma.products.create({
@@ -50,7 +92,7 @@ export const createProduct = async (
         price: Number(price),
         compare_at_price: compare_at_price ? Number(compare_at_price) : null,
         sku: sku?.trim() || null,
-        stock: Number(stock) || 0,
+        stock: Number(stock),
         images: Array.isArray(images) ? images : [],
         variants: Array.isArray(variants) ? variants : [],
         status: status || "active",
@@ -75,6 +117,25 @@ export const updateProduct = async (
   res: Response,
 ): Promise<void> => {
   try {
+    const {
+      name,
+      description,
+      price,
+      compare_at_price,
+      sku,
+      stock,
+      category_id,
+      images,
+      variants,
+      status,
+    } = req.body ?? {};
+
+    const validationError = validateProductInput({ name, price, stock }, true);
+    if (validationError) {
+      res.status(400).json({ success: false, message: validationError });
+      return;
+    }
+
     const store = await getMerchantStore(req.user!.id);
 
     if (!store) {
@@ -96,18 +157,18 @@ export const updateProduct = async (
       return;
     }
 
-    const {
-      name,
-      description,
-      price,
-      compare_at_price,
-      sku,
-      stock,
-      category_id,
-      images,
-      variants,
-      status,
-    } = req.body;
+    if (category_id) {
+      const category = await prisma.categories.findFirst({
+        where: { id: Number(category_id), store_id: store.id },
+      });
+      if (!category) {
+        res.status(400).json({
+          success: false,
+          message: "Category not found or access denied",
+        });
+        return;
+      }
+    }
 
     const updated = await prisma.products.update({
       where: { id: Number(id) },
@@ -181,12 +242,10 @@ export const deleteProduct = async (
       where: { id: Number(req.params.id), store_id: store.id },
     });
     if (deleted.count === 0) {
-      res
-        .status(404)
-        .json({
-          success: false,
-          message: "Product not found or access denied",
-        });
+      res.status(404).json({
+        success: false,
+        message: "Product not found or access denied",
+      });
       return;
     }
 
