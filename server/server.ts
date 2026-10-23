@@ -27,7 +27,7 @@ app.use("/api/upload", uploadRouter);
 app.use("/api/stores", storeRouter);
 app.use("/api/products", productRouter);
 app.use("/api/orders", orderRouter);
-app.use("/api/amalytics", analyticsRoutes);
+app.use("/api/analytics", analyticsRoutes);
 
 app.listen(port, () => {
   console.log(`Server is running at http://localhost:${port}`);
