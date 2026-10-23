@@ -12,13 +12,21 @@ const findStores = mock.fn();
 const execute = mock.fn();
 const query = mock.fn();
 const logError = mock.method(console, "error", () => {});
-const queries = [findStore, findSlug, create, findStores, execute, query];
+const transactionCreate = mock.fn();
+const transactionExecute = mock.fn();
+const transaction = mock.fn();
+const transactionClient = {
+  stores: { create: transactionCreate },
+  $executeRaw: transactionExecute,
+};
+const queries = [transaction, transactionCreate, transactionExecute, findStore, findSlug, create, findStores, execute, query];
 mock.module("../dist/config/prisma.js", {
   namedExports: {
     prisma: {
       stores: { findFirst: findStore, findUnique: findSlug, create, findMany: findStores },
       $executeRaw: execute,
       $queryRaw: query,
+      $transaction: transaction,
     },
   },
 });
@@ -48,6 +56,12 @@ beforeEach(() => {
     events.push("store");
     return { id: 11, ...data };
   });
+  transactionCreate.mock.mockImplementation(async ({ data }) => {
+    events.push("store");
+    return { id: 11, ...data };
+  });
+  transactionExecute.mock.mockImplementation(async () => { events.push("role"); return 1; });
+  transaction.mock.mockImplementation(async (callback) => callback(transactionClient));
   findStores.mock.mockImplementation(async () => []);
   execute.mock.mockImplementation(async () => { events.push("role"); return 1; });
   query.mock.mockImplementation(async () => []);
@@ -71,16 +85,19 @@ test("empty normalized slugs return 400 before uniqueness checks or mutations", 
     const res = await invoke(createStore, { body });
     assert.equal(res.statusCode, 400);
     assert.equal(res.body.success, false);
-    for (const fn of [findSlug, execute, create]) assert.equal(fn.mock.callCount(), 0);
+    for (const fn of [findSlug, execute, create, transaction]) assert.equal(fn.mock.callCount(), 0);
   }
 });
 
-test("store creation normalizes the slug and awaits the role update before inserting", async () => {
+test("store creation normalizes the slug and updates the role using the same transaction", async () => {
   const res = await invoke(createStore);
   assert.equal(res.statusCode, 201);
   assert.equal(res.body.store.slug, "book-shop");
   assert.deepEqual(events, ["role", "store"]);
-  assert.deepEqual(execute.mock.calls[0].arguments.slice(1), ["merchant", userId]);
+  assert.equal(transaction.mock.callCount(), 1);
+  assert.equal(execute.mock.callCount(), 0);
+  assert.equal(create.mock.callCount(), 0);
+  assert.deepEqual(transactionExecute.mock.calls[0].arguments.slice(1), ["merchant", userId]);
 });
 
 test("Neon role update errors are logged, rethrown, and prevent store creation", async () => {
@@ -88,9 +105,41 @@ test("Neon role update errors are logged, rethrown, and prevent store creation",
   execute.mock.mockImplementation(async () => { throw failure; });
   await assert.rejects(updateNeonUserRole(userId, "merchant"), (error) => error === failure);
   assert.deepEqual(logError.mock.calls[0].arguments, [failure]);
+  transactionExecute.mock.mockImplementation(async () => { throw failure; });
   const res = await invoke(createStore);
+  await assert.rejects(transaction.mock.calls[0].result, (error) => error === failure);
+  assert.equal(transactionCreate.mock.callCount(), 0);
   assert.equal(res.statusCode, 500);
   assert.equal(res.body.success, false);
+  assert.equal(create.mock.callCount(), 0);
+});
+
+test("invalid accent colors return 400 before a transaction or role mutation", async () => {
+  for (const accent_color of [null, 123, true, [], {}, "x".repeat(51)]) {
+    const res = await invoke(createStore, { body: { name: "Book Shop", accent_color } });
+    assert.equal(res.statusCode, 400);
+    for (const fn of [transaction, execute, transactionExecute, create, transactionCreate]) {
+      assert.equal(fn.mock.callCount(), 0);
+    }
+  }
+});
+
+test("accent colors are prepared before insertion and blank colors retain the default", async () => {
+  for (const [accent_color, expected] of [["  #123abc  ", "#123abc"], ["  ", "#059669"]]) {
+    const res = await invoke(createStore, { body: { name: "Book Shop", accent_color } });
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.store.accent_color, expected);
+  }
+});
+
+test("store insertion errors reject the role transaction so both mutations roll back", async () => {
+  const failure = new Error("synthetic store insertion failure");
+  transactionCreate.mock.mockImplementation(async () => { throw failure; });
+  const res = await invoke(createStore);
+  assert.equal(res.statusCode, 500);
+  assert.equal(transactionExecute.mock.callCount(), 1);
+  await assert.rejects(transaction.mock.calls[0].result, (error) => error === failure);
+  assert.equal(execute.mock.callCount(), 0);
   assert.equal(create.mock.callCount(), 0);
 });
 
