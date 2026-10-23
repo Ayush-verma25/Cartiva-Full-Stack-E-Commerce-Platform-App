@@ -29,12 +29,10 @@ export const createOrder = async (
     }
 
     if (!customerName || !customerEmail || !shippingAddress) {
-      res
-        .status(400)
-        .json({
-          success: false,
-          message: "Customer name, email, and shipping address are required",
-        });
+      res.status(400).json({
+        success: false,
+        message: "Customer name, email, and shipping address are required",
+      });
       return;
     }
 
@@ -64,23 +62,19 @@ export const createOrder = async (
         where: { id: Number(item.productId), store_id: targetStore.id },
       });
       if (!product) {
-        res
-          .status(404)
-          .json({
-            success: false,
-            message: `Product ${item.name || item.productId} no longer exists`,
-          });
+        res.status(404).json({
+          success: false,
+          message: `Product ${item.name || item.productId} no longer exists`,
+        });
         return;
       }
 
       const qty = Math.max(1, Number(item.quantity) || 1);
       if ((product.stock ?? 0) < qty) {
-        res
-          .status(400)
-          .json({
-            success: false,
-            message: `Not enough stock for ${item.name}. Available: ${product.stock}`,
-          });
+        res.status(400).json({
+          success: false,
+          message: `Not enough stock for ${item.name}. Available: ${product.stock}`,
+        });
         return;
       }
 
@@ -301,7 +295,7 @@ export const getCustomerOrders = async (
               {
                 customer_email: {
                   equals: userEmail,
-                  node: "insensitive" as const,
+                  mode: "insensitive" as const,
                 },
               },
             ]

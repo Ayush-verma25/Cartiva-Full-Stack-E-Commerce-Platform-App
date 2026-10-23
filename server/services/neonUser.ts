@@ -92,15 +92,30 @@ export const findNeonUsersByIds = async (
   }
 };
 
-export const findNeonMerchants = async () : Promise<NeonUserRecord[]> =>{
+export const findNeonMerchants = async (): Promise<NeonUserRecord[]> => {
   try {
     return await prisma.$queryRaw<NeonUserRecord[]>`
     SELECT id, name, email, role, "createdAt" as "createdAt"
     FROM neon_auth_user
     WHERE role = 'merchant'
-    ORDER BY "createdAt" DESC`
+    ORDER BY "createdAt" DESC`;
   } catch (e) {
     console.error(e);
     throw e;
   }
-}
+};
+
+export const countNeonMerchants = async (): Promise<number> => {
+  try {
+    const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
+    SELECT COUNT(*) as count
+    FROM neon_auth_user
+    WHERE role = 'merchant'
+    `;
+
+    return Number(rows[0]?.count || 0);
+  } catch (e) {
+    console.error(e);
+    return 0;
+  }
+};
