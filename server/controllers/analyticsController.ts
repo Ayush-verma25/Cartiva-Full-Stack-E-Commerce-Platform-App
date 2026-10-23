@@ -43,8 +43,8 @@ export const getMerchantAnalytics = async (
       prisma.orders.count({
         where: { store_id: sid, order_status: "delivered" },
       }),
-      prisma.orders.count({ where: { store_id: sid } }),
-      prisma.orders.count({ where: { store_id: sid, stock: { lte: 5 } } }),
+      prisma.products.count({ where: { store_id: sid } }),
+      prisma.products.count({ where: { store_id: sid, stock: { lte: 5 } } }),
       prisma.orders.findMany({
         where: { store_id: sid },
         orderBy: { created_at: "desc" },
