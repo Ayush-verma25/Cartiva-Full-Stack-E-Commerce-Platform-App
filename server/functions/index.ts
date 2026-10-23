@@ -154,7 +154,10 @@ export default {
                 c.name as category_name, c.slug as category_slug
                 FROM products p
                 LEFT JOIN categories c ON p.category_id = c.id
+                LEFT JOIN stores s ON p.store_id = s.id
                 WHERE p.store_id = ${targetStoreId}
+                AND p.status = 'active'
+                AND s.status = 'active'
                 AND (${status}::text IS NULL OR p.status = ${status})
                 AND (${categoryId}::int IS NULL OR p.category_id = ${categoryId})
                 AND (${search}::text IS NULL OR (
