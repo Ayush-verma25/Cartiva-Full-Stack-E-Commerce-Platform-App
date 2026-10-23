@@ -76,6 +76,15 @@ export const createStore = async (
       return;
     }
 
+    if (typeof accent_color !== "string" || accent_color.trim().length > 50) {
+      res.status(400).json({
+        success: false,
+        message: "Accent color must be a string no longer than 50 characters",
+      });
+      return;
+    }
+    const accentColor = accent_color.trim() || "#059669";
+
     const finalSlug = slug ? generateSlug(slug) : generateSlug(name);
 
     if (!finalSlug) {
@@ -101,26 +110,27 @@ export const createStore = async (
       return;
     }
 
-    // Update User role to merchant
-    await updateNeonUserRole(merchantId, "merchant");
+    const newStore = await prisma.$transaction(async (tx) => {
+      await updateNeonUserRole(merchantId, "merchant", tx);
 
-    const newStore = await prisma.stores.create({
-      data: {
-        merchant_id: merchantId,
-        name: name.trim(),
-        slug: finalSlug,
-        description: description || "",
-        logo_url: logo_url || "",
-        banner_url: banner_url || "",
-        currency,
-        status: "active",
-        shipping_fee: Number(shipping_fee) || 0,
-        free_shipping_threshold: Number(free_shipping_threshold) || 0,
-        hero_style: ["hero1", "hero2", "hero3", "hero4"].includes(hero_style)
-          ? hero_style
-          : "hero1",
-        accent_color: accent_color.trim() || "#059669",
-      },
+      return tx.stores.create({
+        data: {
+          merchant_id: merchantId,
+          name: name.trim(),
+          slug: finalSlug,
+          description: description || "",
+          logo_url: logo_url || "",
+          banner_url: banner_url || "",
+          currency,
+          status: "active",
+          shipping_fee: Number(shipping_fee) || 0,
+          free_shipping_threshold: Number(free_shipping_threshold) || 0,
+          hero_style: ["hero1", "hero2", "hero3", "hero4"].includes(hero_style)
+            ? hero_style
+            : "hero1",
+          accent_color: accentColor,
+        },
+      });
     });
 
     res.status(201).json({
