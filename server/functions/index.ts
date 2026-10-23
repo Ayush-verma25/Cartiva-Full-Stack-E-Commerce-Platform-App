@@ -111,6 +111,8 @@ export default {
                 LEFT JOIN categories c ON p.category_id = c.id
                 LEFT JOIN stores s ON p.store_id = s.id
                 WHERE p.id = ${productId}
+                AND s.status = 'active'
+                AND p.status = 'active'
                 LIMIT 1
                 `;
 
